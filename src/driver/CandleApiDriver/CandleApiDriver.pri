@@ -8,8 +8,8 @@ SOURCES += \
     $$PWD/CandleApiTiming.cpp
 
 #win32:LIBS += -L$$PWD/api/ -lcandle_api
-win32: LIBS += -lSetupApi
-win32: LIBS += -lOle32
+win32: LIBS += -lsetupapi
+win32: LIBS += -lole32
 win32: LIBS += -lwinusb
 
 HEADERS += \

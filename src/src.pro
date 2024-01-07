@@ -10,6 +10,7 @@ TARGET = cangaroo
 TEMPLATE = app
 CONFIG += warn_on
 CONFIG += link_pkgconfig
+CONFIG += static
 
 DESTDIR = ../bin
 MOC_DIR = ../build/moc
@@ -44,7 +45,8 @@ unix:PKGCONFIG += libnl-3.0
 unix:PKGCONFIG += libnl-route-3.0
 unix:include($$PWD/driver/SocketCanDriver/SocketCanDriver.pri)
 
-include($$PWD/driver/CANBlastDriver/CANBlastDriver.pri)
+#include($$PWD/driver/CANBlastDriver/CANBlastDriver.pri)
 include($$PWD/driver/SLCANDriver/SLCANDriver.pri)
 
 win32:include($$PWD/driver/CandleApiDriver/CandleApiDriver.pri)
+win32:QMAKE_LFLAGS += -static -static-libgcc

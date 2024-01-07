@@ -44,9 +44,9 @@ typedef enum {
 } candle_frametype_t;
 
 enum {
-    CANDLE_ID_EXTENDED = 0x80000000,
-    CANDLE_ID_RTR      = 0x40000000,
-    CANDLE_ID_ERR      = 0x20000000
+    CANDLE_ID_EXTENDED = 0x80000000UL,
+    CANDLE_ID_RTR      = 0x40000000UL,
+    CANDLE_ID_ERR      = 0x20000000UL
 };
 
 typedef enum {
@@ -140,6 +140,8 @@ bool __stdcall DLL candle_dev_open(candle_handle hdev);
 bool __stdcall DLL candle_dev_get_timestamp_us(candle_handle hdev, uint32_t *timestamp_us);
 bool __stdcall DLL candle_dev_close(candle_handle hdev);
 bool __stdcall DLL candle_dev_free(candle_handle hdev);
+bool __stdcall DLL candle_dev_is_exists(candle_handle hdev);
+bool __stdcall DLL candle_dev_is_open(candle_handle hdev);
 
 bool __stdcall DLL candle_channel_count(candle_handle hdev, uint8_t *num_channels);
 bool __stdcall DLL candle_channel_get_capabilities(candle_handle hdev, uint8_t ch, candle_capability_t *cap);

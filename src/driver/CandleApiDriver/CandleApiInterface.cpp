@@ -1,20 +1,20 @@
 #include "CandleApiDriver.h"
 #include "CandleApiInterface.h"
+#include <QThread>
 
-CandleApiInterface::CandleApiInterface(CandleApiDriver *driver, candle_handle handle)
+CandleApiInterface::CandleApiInterface(CandleApiDriver *driver, candle_handle handle, uint8_t channel)
   : CanInterface(driver),
     _hostOffsetStart(0),
     _deviceTicksStart(0),
     _handle(handle),
     _backend(driver->backend()),
+    _channel(channel),
     _numRx(0),
     _numTx(0),
     _numTxErr(0)
 {
     _settings.setBitrate(500000);
     _settings.setSamplePoint(875);
-
-
 
     // Timings for 170MHz processors (CANable 2.0)
     // Tseg1: 2..256 Tseg2: 2..128 sjw: 1..128 brp: 1..512
@@ -128,6 +128,18 @@ CandleApiInterface::CandleApiInterface(CandleApiDriver *driver, candle_handle ha
         << CandleApiTiming(16000000,  500000, 875,  2, 12,  2)
         << CandleApiTiming(16000000,  800000, 900,  2,  7,  1)
         << CandleApiTiming(16000000, 1000000, 875,  1, 12,  2);
+
+    // Timings for 36MHz clock
+    _timings
+        // sample point: 87.5%, sjw=1, prop_seg=1
+        << CandleApiTiming(36000000,   20000, 875, 100, 14, 2)
+        << CandleApiTiming(36000000,   50000, 875, 45,  12, 2)
+        << CandleApiTiming(36000000,  100000, 875, 20,  14, 2)
+        << CandleApiTiming(36000000,  125000, 875, 18,  12, 2)
+        << CandleApiTiming(36000000,  250000, 875,  9,  12, 2)
+        << CandleApiTiming(36000000,  500000, 875,  4,  14, 2)
+        << CandleApiTiming(36000000,  800000, 875,  3,  11, 2)
+        << CandleApiTiming(36000000, 1000000, 875,  2,  14, 2);
 }
 
 CandleApiInterface::~CandleApiInterface()
@@ -212,7 +224,7 @@ bool CandleApiInterface::setBitTiming(uint32_t bitrate, uint32_t samplePoint)
           && (t.getSamplePoint()==samplePoint) )
         {
             candle_bittiming_t timing = t.getTiming();
-            return candle_channel_set_timing(_handle, 0, &timing);
+            return candle_channel_set_timing(_handle, _channel, &timing);
         }
     }
 
@@ -222,10 +234,23 @@ bool CandleApiInterface::setBitTiming(uint32_t bitrate, uint32_t samplePoint)
 
 void CandleApiInterface::open()
 {
-    if (!candle_dev_open(_handle)) {
-        // TODO what?
-        _isOpen = false;
-        return;
+    if (0 == _channel) {
+        if (!candle_dev_open(_handle)) {
+            // TODO what?
+            _isOpen = false;
+            return;
+        }
+    }
+    else {
+        for (int i = 0; i < 10; i++) {
+            if (!candle_dev_is_open(_handle))
+                QThread().msleep(10);
+        }
+
+        if (!candle_dev_is_open(_handle)) {
+            _isOpen = false;
+            return;
+        }
     }
 
     if (!setBitTiming(_settings.bitrate(), _settings.samplePoint())) {
@@ -257,7 +282,7 @@ void CandleApiInterface::open()
         _deviceTicksStart = t_dev;
     }
 
-    candle_channel_start(_handle, 0, flags);
+    candle_channel_start(_handle, _channel, flags);
     _isOpen = true;
 }
 
@@ -268,8 +293,11 @@ bool CandleApiInterface::isOpen()
 
 void CandleApiInterface::close()
 {
-    candle_channel_stop(_handle, 0);
-    candle_dev_close(_handle);
+    candle_channel_stop(_handle, _channel);
+
+    if (0 == _channel) {
+        candle_dev_close(_handle);
+    }
     _isOpen = false;
 }
 
@@ -290,7 +318,7 @@ void CandleApiInterface::sendMessage(const CanMessage &msg)
         frame.data[i] = msg.getByte(i);
     }
 
-    if (candle_frame_send(_handle, 0, &frame)) {
+    if (candle_frame_send(_handle, _channel, &frame)) {
         _numTx++;
     } else {
         _numTxErr++;
@@ -302,12 +330,17 @@ bool CandleApiInterface::readMessage(QList<CanMessage> &msglist, unsigned int ti
     candle_frame_t frame;
     CanMessage msg;
 
+    if (0 != _channel) {
+        QThread().msleep(timeout_ms);
+            return false;
+    }
+
     if (candle_frame_read(_handle, &frame, timeout_ms)) {
 
         if (candle_frame_type(&frame)==CANDLE_FRAMETYPE_RECEIVE) {
             _numRx++;
 
-            msg.setInterfaceId(getId());
+            msg.setInterfaceId(getId() + frame.channel);
             msg.setErrorFrame(false);
             msg.setId(candle_frame_id(&frame));
             msg.setExtended(candle_frame_is_extended_id(&frame));
@@ -389,3 +422,7 @@ void CandleApiInterface::update(candle_handle dev)
     _handle = dev;
 }
 
+uint8_t CandleApiInterface::getChannel()
+{
+    return _channel;
+}

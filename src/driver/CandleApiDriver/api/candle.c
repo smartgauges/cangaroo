@@ -24,11 +24,10 @@
 
 #include "candle_defs.h"
 #include "candle_ctrl_req.h"
-#include "ch_9.h"
 
 static bool candle_dev_interal_open(candle_handle hdev);
 
-static bool candle_read_di(HDEVINFO hdi, SP_DEVICE_INTERFACE_DATA interfaceData, candle_device_t *dev)
+static bool candle_read_di_path(HDEVINFO hdi, SP_DEVICE_INTERFACE_DATA interfaceData, candle_device_t *dev)
 {
     /* get required length first (this call always fails with an error) */
     ULONG requiredLength=0;
@@ -60,21 +59,63 @@ static bool candle_read_di(HDEVINFO hdi, SP_DEVICE_INTERFACE_DATA interfaceData,
 
     LocalFree(detail_data);
 
-    if (!retval) {
+    return retval;
+}
+
+bool candle_get_present_list(candle_list_t *list)
+{
+    if (list==NULL) {
         return false;
     }
 
-    /* try to open to read device infos and see if it is avail */
-    if (candle_dev_interal_open(dev)) {
-        dev->state = CANDLE_DEVSTATE_AVAIL;
-        candle_dev_close(dev);
-    } else {
-        dev->state = CANDLE_DEVSTATE_INUSE;
+    list->num_devices = 0;
+    GUID guid;
+    if (CLSIDFromString(L"{c15b4308-04d3-11e6-b3ea-6057189e6443}", &guid) != NOERROR) {
+        list->last_error = CANDLE_ERR_CLSID;
+        return false;
     }
 
-    dev->last_error = CANDLE_ERR_OK;
-    return true;
+    HDEVINFO hdi = SetupDiGetClassDevs(&guid, NULL, NULL, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+    if (hdi == INVALID_HANDLE_VALUE) {
+        list->last_error = CANDLE_ERR_GET_DEVICES;
+        return false;
+    }
+
+    bool rv = false;
+    for (unsigned i = 0; i < CANDLE_MAX_DEVICES; i++) {
+
+        SP_DEVICE_INTERFACE_DATA interfaceData;
+        interfaceData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
+
+        if (SetupDiEnumDeviceInterfaces(hdi, NULL, &guid, i, &interfaceData)) {
+
+            if (!candle_read_di_path(hdi, interfaceData, &list->dev[i])) {
+                list->last_error = list->dev[i].last_error;
+                rv = false;
+                break;
+            }
+        }
+	else {
+
+            DWORD err = GetLastError();
+            if (err==ERROR_NO_MORE_ITEMS) {
+                list->num_devices = i;
+                list->last_error = CANDLE_ERR_OK;
+                rv = true;
+            } else {
+                list->last_error = CANDLE_ERR_SETUPDI_IF_ENUM;
+                rv = false;
+            }
+            break;
+        }
+    }
+
+    SetupDiDestroyDeviceInfoList(hdi);
+
+    return rv;
 }
+
+static candle_list_t candle_list = { .num_devices = 0, };
 
 bool __stdcall candle_list_scan(candle_list_handle *list)
 {
@@ -82,59 +123,86 @@ bool __stdcall candle_list_scan(candle_list_handle *list)
         return false;
     }
 
-    candle_list_t *l = (candle_list_t *)calloc(1, sizeof(candle_list_t));
-    *list = l;
-    if (l==NULL) {
-        return false;
-    }
+    //clear list
+    if (!candle_list.num_devices)
+        memset(&candle_list, 0, sizeof(candle_list));
 
-    GUID guid;
-    if (CLSIDFromString(L"{c15b4308-04d3-11e6-b3ea-6057189e6443}", &guid) != NOERROR) {
-        l->last_error = CANDLE_ERR_CLSID;
-        return false;
-    }
+    *list = &candle_list;
 
-    HDEVINFO hdi = SetupDiGetClassDevs(&guid, NULL, NULL, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
-    if (hdi == INVALID_HANDLE_VALUE) {
-        l->last_error = CANDLE_ERR_GET_DEVICES;
-        return false;
-    }
+    candle_list_t present_list;
+    if (!candle_get_present_list(&present_list))
+        present_list.num_devices = 0;
 
-    bool rv = false;
-    for (unsigned i=0; i<CANDLE_MAX_DEVICES; i++) {
+    printf("presents %d devs\n",  present_list.num_devices);
 
-        SP_DEVICE_INTERFACE_DATA interfaceData;
-        interfaceData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
+    for (unsigned i = 0; i < present_list.num_devices; i++) {
 
-        if (SetupDiEnumDeviceInterfaces(hdi, NULL, &guid, i, &interfaceData)) {
+        candle_device_t * pdev = &present_list.dev[i];
+	//find exists dev
+	bool exists = false;
+	for (unsigned j = 0; j < CANDLE_MAX_DEVICES; j++) {
+           candle_device_t * dev = &candle_list.dev[j];
+           if (dev->exists && !wcscmp(pdev->path, dev->path)) {
+                exists = true;
+		break;
+	    }
+	}
 
-            if (!candle_read_di(hdi, interfaceData, &l->dev[i])) {
-                l->last_error = l->dev[i].last_error;
-                rv = false;
+        if (exists)
+           continue;
+
+        candle_device_t * newdev = NULL;
+        //find unused slot
+        for (unsigned j = 0; j < CANDLE_MAX_DEVICES; j++) {
+            if (!candle_list.dev[j].exists) {
+                newdev = &candle_list.dev[j];
                 break;
             }
+	}
+	printf("new dev:%p %S\n", newdev, newdev->path);
 
-        } else {
+	if (newdev) {
 
-            DWORD err = GetLastError();
-            if (err==ERROR_NO_MORE_ITEMS) {
-                l->num_devices = i;
-                l->last_error = CANDLE_ERR_OK;
-                rv = true;
-            } else {
-                l->last_error = CANDLE_ERR_SETUPDI_IF_ENUM;
-                rv = false;
-            }
-            break;
+            newdev->exists = true;
+	    newdev->open = false;
+	    candle_list.num_devices++;
+	    StringCchCopy(newdev->path, sizeof(newdev->path), pdev->path);
+	    /* try to open to read device infos and see if it is avail */
+	    if (candle_dev_interal_open(newdev)) {
+		    newdev->state = CANDLE_DEVSTATE_AVAIL;
+		    candle_dev_close(newdev);
+	    } else {
+		    newdev->state = CANDLE_DEVSTATE_INUSE;
+	    }
 
-        }
-
+	    newdev->last_error = CANDLE_ERR_OK;
+	}
     }
 
-    SetupDiDestroyDeviceInfoList(hdi);
+    //delete removed devs
+    for (unsigned i = 0; i < CANDLE_MAX_DEVICES; i++) {
 
-    return rv;
+        candle_device_t * dev = &candle_list.dev[i];
+	bool present = false;
+	for (unsigned j = 0; j < present_list.num_devices; j++) {
+	    candle_device_t * pdev = &present_list.dev[j];
+	    if (dev->exists && !wcscmp(dev->path, pdev->path)) {
+		present = true;
+		break;
+	    }
+	}
 
+	//dev was removed
+	if (dev->exists && !present) {
+	    printf("remove %u\n", i);
+	    if (dev->exists && dev->open)
+	        candle_dev_close(dev);
+	    dev->exists = false;
+	    candle_list.num_devices--;
+	}
+    }
+
+    return true;
 }
 
 bool __stdcall DLL candle_list_free(candle_list_handle list)
@@ -162,16 +230,9 @@ bool __stdcall DLL candle_dev_get(candle_list_handle list, uint8_t dev_num, cand
         return false;
     }
 
-    candle_device_t *dev = calloc(1, sizeof(candle_device_t));
-    *hdev = dev;
-    if (dev==NULL) {
-        l->last_error = CANDLE_ERR_MALLOC;
-        return false;
-    }
-
-    memcpy(dev, &l->dev[dev_num], sizeof(candle_device_t));
+    *hdev = &l->dev[dev_num];
     l->last_error = CANDLE_ERR_OK;
-    dev->last_error = CANDLE_ERR_OK;
+
     return true;
 }
 
@@ -270,6 +331,7 @@ static bool candle_dev_interal_open(candle_handle hdev)
     }
 
     if (!candle_ctrl_get_config(dev, &dev->dconf)) {
+        printf("dconf->icount:%u\n", dev->dconf.icount);
         goto winusb_free;
     }
 
@@ -279,6 +341,7 @@ static bool candle_dev_interal_open(candle_handle hdev)
     }
 
     dev->last_error = CANDLE_ERR_OK;
+    dev->open = true;
     return true;
 
 winusb_free:
@@ -287,7 +350,6 @@ winusb_free:
 close_handle:
     CloseHandle(dev->deviceHandle);
     return false;
-
 }
 
 static bool candle_prepare_read(candle_device_t *dev, unsigned urb_num)
@@ -314,12 +376,12 @@ static bool candle_close_rxurbs(candle_device_t *dev)
 {
     for (unsigned i=0; i<CANDLE_URB_COUNT; i++) {
         if (dev->rxevents[i] != NULL) {
+            CancelIo(dev->rxevents[i]);
             CloseHandle(dev->rxevents[i]);
         }
     }
     return true;
 }
-
 
 bool __stdcall DLL candle_dev_open(candle_handle hdev)
 {
@@ -340,7 +402,6 @@ bool __stdcall DLL candle_dev_open(candle_handle hdev)
     } else {
         return false; // keep last_error from open_device call
     }
-
 }
 
 bool __stdcall DLL candle_dev_get_timestamp_us(candle_handle hdev, uint32_t *timestamp_us)
@@ -356,10 +417,12 @@ bool __stdcall DLL candle_dev_close(candle_handle hdev)
 
     WinUsb_Free(dev->winUSBHandle);
     dev->winUSBHandle = NULL;
+    CancelIo(dev->deviceHandle);
     CloseHandle(dev->deviceHandle);
     dev->deviceHandle = NULL;
 
     dev->last_error = CANDLE_ERR_OK;
+    dev->open = false;
     return true;
 }
 
@@ -367,6 +430,20 @@ bool __stdcall DLL candle_dev_free(candle_handle hdev)
 {
     free(hdev);
     return true;
+}
+
+bool __stdcall DLL candle_dev_is_exists(candle_handle hdev)
+{
+    candle_device_t *dev = (candle_device_t*)hdev;
+
+   return dev->exists;
+}
+
+bool __stdcall DLL candle_dev_is_open(candle_handle hdev)
+{
+    candle_device_t *dev = (candle_device_t*)hdev;
+
+   return dev->open;
 }
 
 candle_err_t __stdcall DLL candle_dev_last_error(candle_handle hdev)
@@ -385,6 +462,7 @@ bool __stdcall DLL candle_channel_count(candle_handle hdev, uint8_t *num_channel
 
 bool __stdcall DLL candle_channel_get_capabilities(candle_handle hdev, uint8_t ch, candle_capability_t *cap)
 {
+    (void)ch;
     // TODO check if info was already read from device; try to do so; throw error...
     candle_device_t *dev = (candle_device_t*)hdev;
     memcpy(cap, &dev->bt_const.feature, sizeof(candle_capability_t));
@@ -516,7 +594,7 @@ bool __stdcall DLL candle_frame_read(candle_handle hdev, candle_frame_t *frame, 
         return false;
     }
 
-    if ( (wait_result < WAIT_OBJECT_0) || (wait_result >= WAIT_OBJECT_0 + CANDLE_URB_COUNT) ) {
+    if (wait_result >= WAIT_OBJECT_0 + CANDLE_URB_COUNT) {
         dev->last_error = CANDLE_ERR_READ_WAIT;
         return false;
     }

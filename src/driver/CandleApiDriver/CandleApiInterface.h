@@ -15,7 +15,7 @@ using namespace std;
 class CandleApiInterface : public CanInterface
 {
 public:
-    CandleApiInterface(CandleApiDriver *driver, candle_handle handle);
+    CandleApiInterface(CandleApiDriver *driver, candle_handle handle, uint8_t channel);
     virtual ~CandleApiInterface();
 
     virtual QString getName() const;
@@ -48,6 +48,8 @@ public:
 
     void update(candle_handle dev);
 
+    uint8_t getChannel();
+
 private:
 
     uint64_t _hostOffsetStart;
@@ -57,6 +59,7 @@ private:
     candle_handle _handle;
     MeasurementInterface _settings;
     Backend &_backend;
+    uint8_t _channel;
 
     uint64_t _numRx;
     uint64_t _numTx;

@@ -82,7 +82,7 @@ SetupDialog::SetupDialog(Backend &backend, QWidget *parent) :
     connect(ui->interfacesTreeView->selectionModel(), SIGNAL(selectionChanged(QItemSelection,QItemSelection)), this, SLOT(updateButtons()));
 
     connect(ui->btReloadDatabases, SIGNAL (released()), this, SLOT(executeReloadCanDbs()));
-    connect(ui->btRefreshNetworks, SIGNAL(released()), this, SLOT(on_btRefreshNetwork_clicked()));
+    connect(ui->btRefreshNetworks, SIGNAL(released()), this, SLOT(on_btRefreshNetworks_clicked()));
 
     connect(_actionAddCanDb, SIGNAL(triggered()), this, SLOT(executeAddCanDb()));
     connect(_actionDeleteCanDb, SIGNAL(triggered()), this, SLOT(executeDeleteCanDb()));

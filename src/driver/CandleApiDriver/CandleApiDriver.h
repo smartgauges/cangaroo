@@ -38,7 +38,7 @@ public:
 
 private:
     GenericCanSetupPage *setupPage;
-    CandleApiInterface *findInterface(candle_handle dev);
+    CandleApiInterface *findInterface(candle_handle dev, uint8_t channel);
 
 };
 

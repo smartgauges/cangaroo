@@ -80,7 +80,7 @@ MainWindow::MainWindow(QWidget *parent) :
     Backend::instance().addCanDriver(*(new CandleApiDriver(Backend::instance())));
 #endif
     Backend::instance().addCanDriver(*(new SLCANDriver(Backend::instance())));
-    Backend::instance().addCanDriver(*(new CANBlasterDriver(Backend::instance())));
+    //Backend::instance().addCanDriver(*(new CANBlasterDriver(Backend::instance())));
 
     setWorkspaceModified(false);
     newWorkspace();

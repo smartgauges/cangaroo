@@ -67,6 +67,8 @@ typedef struct {
 } canlde_rx_urb;
 
 typedef struct {
+    bool exists;
+    bool open;
     wchar_t path[256];
     candle_devstate_t state;
     candle_err_t last_error;

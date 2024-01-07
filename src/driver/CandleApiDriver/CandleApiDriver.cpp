@@ -49,17 +49,29 @@ bool CandleApiDriver::update()
         if (candle_list_length(clist, &num_interfaces)) {
             for (uint8_t i=0; i<num_interfaces; i++) {
                 if (candle_dev_get(clist, i, &dev)) {
-                    CandleApiInterface *cif = findInterface(dev);
+                    candle_devstate_t state;
+                    if (!candle_dev_get_state(dev, &state))
+                        continue;
 
-                    if (cif == NULL) {
-                        cif = new CandleApiInterface(this, dev);
-                        addInterface(cif);
-                    } else {
-                        cif->update(dev);
+                    if (state != CANDLE_DEVSTATE_AVAIL)
+                        continue;
+
+                    uint8_t num_channels = 0;
+                    candle_channel_count(dev, &num_channels);
+
+                    for (uint8_t c = 0; c < num_channels; c++) {
+
+                        CandleApiInterface *cif = findInterface(dev, c);
+
+                        if (cif == NULL) {
+                            cif = new CandleApiInterface(this, dev, c);
+                            addInterface(cif);
+                        }
+                        else {
+                            cif->update(dev);
+                        }
                     }
-
                 }
-
             }
         }
         candle_list_free(clist);
@@ -68,11 +80,11 @@ bool CandleApiDriver::update()
     return true;
 }
 
-CandleApiInterface *CandleApiDriver::findInterface(candle_handle dev)
+CandleApiInterface *CandleApiDriver::findInterface(candle_handle dev, uint8_t channel)
 {
     foreach (CanInterface *intf, getInterfaces()) {
         CandleApiInterface *cif = dynamic_cast<CandleApiInterface*>(intf);
-        if (cif->getPath() == std::wstring(candle_dev_get_path(dev))) {
+        if ((cif->getPath() == std::wstring(candle_dev_get_path(dev))) && (cif->getChannel() == channel)) {
             return cif;
         }
     }
